@@ -98,5 +98,11 @@ Manba: SIAT (Milliy statistika qo‘mitasi), dataset kodi 1.02.01.0001 (SIAT id 
    положить `siat_dump.sql.gz` рядом со скриптом на сервере и запустить скрипт ещё раз.
 3. Остановить бота на Mac: `launchctl bootout gui/$(id -u)/uz.siat.bot` (один токен — один бот).
 
+Мониторинг (`deploy/monitor.sh`, cron каждые 5 минут): если бот не запущен или не опрашивает Telegram
+больше 5 минут, база не отвечает, данные не обновлялись больше 36 часов или диск заполнен на 90 %, бот
+присылает сообщение в Telegram на `TELEGRAM_ADMIN_CHAT_ID` (свой ID бот показывает по команде `/id`).
+Когда всё восстановится, придёт второе сообщение. Ошибка ночного обновления (`deploy/update.sh`) тоже
+приходит сразу. Остановленный бот монитор перезапускает сам.
+
 Код на сервере: `/opt/siat_agent`, ключи: `/opt/siat_agent/.env` (только root).
 Лог: `sudo docker compose logs -f bot`, проверка: `sudo docker compose run --rm bot python eval/run_eval.py --llm`.

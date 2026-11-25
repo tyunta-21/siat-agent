@@ -5,6 +5,11 @@ Settings in .env:
   TELEGRAM_ALLOWED_USERS=12345,67890        optional: only these Telegram user ids may ask (empty = everyone)
   TELEGRAM_LIMIT_PER_HOUR=30                optional: questions per user per hour (protects the OpenAI balance)
 
+  TELEGRAM_ADMIN_CHAT_ID=12345              optional: where server monitoring sends alerts (deploy/monitor.sh)
+
+Commands: /start, /help, /id (shows your Telegram id, for TELEGRAM_ADMIN_CHAT_ID).
+The bot touches $SIAT_DATA_DIR/heartbeat every polling cycle, so the monitor can see it is alive.
+
 Run:  .venv/bin/python telegram_bot.py
 """
 from __future__ import annotations
@@ -19,7 +24,7 @@ from collections import defaultdict, deque
 import requests
 
 from query_agent import ask
-from siat_common import log
+from siat_common import DATA_DIR, log
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 ALLOWED = {int(x) for x in re.findall(r"\d+", os.environ.get("TELEGRAM_ALLOWED_USERS", ""))}
@@ -42,6 +47,15 @@ HELP = (
 )
 
 _hits: dict[int, deque] = defaultdict(deque)
+HEARTBEAT = DATA_DIR / "heartbeat"
+
+
+def beat() -> None:
+    try:
+        HEARTBEAT.parent.mkdir(parents=True, exist_ok=True)
+        HEARTBEAT.write_text(str(int(time.time())))
+    except OSError as e:
+        log.warning("heartbeat not written: %s", e)
 
 
 def tg(method: str, **params):
@@ -106,6 +120,8 @@ def handle(msg: dict) -> str | None:
         return None
     if text.startswith("/start") or text.startswith("/help"):
         return HELP
+    if text.startswith("/id"):
+        return f"Sizning Telegram ID: <code>{uid}</code>"
     if ALLOWED and uid not in ALLOWED:
         return "Kechirasiz, bu bot hozircha yopiq rejimda ishlaydi."
     if not allowed_now(uid):
@@ -127,6 +143,7 @@ def main() -> None:
     tg("setMyCommands", commands=[{"command": "help", "description": "Qanday savol berish mumkin"}])
     offset = 0
     while True:
+        beat()
         try:
             updates = tg("getUpdates", offset=offset, timeout=50, allowed_updates=["message"])
         except Exception as e:

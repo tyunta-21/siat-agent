@@ -56,6 +56,12 @@ ENV
 else
   echo ".env уже есть, оставляю"
 fi
+if ! grep -q '^TELEGRAM_ADMIN_CHAT_ID=[0-9]' .env; then
+  echo "Мониторинг: сюда будут приходить уведомления, если бот упадёт или обновление не пройдёт."
+  read -r -p "Твой Telegram ID (бот покажет его по команде /id; Enter = без уведомлений): " AID
+  AID=$(printf '%s' "$AID" | tr -dc 0-9)
+  [ -n "$AID" ] && { sed -i '/^TELEGRAM_ADMIN_CHAT_ID=/d' .env; echo "TELEGRAM_ADMIN_CHAT_ID=$AID" >> .env; }
+fi
 set -a; . ./.env; set +a
 
 say "4/6 PostgreSQL"
@@ -83,9 +89,14 @@ mkdir -p /etc/cron.d
 cat > /etc/cron.d/siat-update <<CRON
 CRON_TZ=Asia/Tashkent
 0 4 * * * root $DIR/deploy/update.sh >> /var/log/siat-update.log 2>&1
+*/5 * * * * root $DIR/deploy/monitor.sh >> /var/log/siat-monitor.log 2>&1
 CRON
+mkdir -p /var/lib/siat-monitor
+[ -f /var/lib/siat-monitor/last_update_ok ] || date +%s > /var/lib/siat-monitor/last_update_ok
 sleep 5
 docker compose logs --tail 3 bot
+deploy/notify.sh "Мониторинг включён: сюда придёт сообщение, если бот упадёт или ночное обновление не пройдёт."
+grep -q '^TELEGRAM_ADMIN_CHAT_ID=[0-9]' .env && echo "Тестовое уведомление отправлено тебе в Telegram."
 
 say "Готово!"
 echo "Бот работает на сервере и перезапускается сам (и после перезагрузки сервера)."
@@ -94,4 +105,5 @@ echo "   launchctl bootout gui/\$(id -u)/uz.siat.bot ; rm ~/Library/LaunchAgents
 echo "Лог бота:          cd $DIR && sudo docker compose logs -f bot"
 echo "Вопрос из консоли: cd $DIR && sudo docker compose run --rm bot python query_agent.py \"...\""
 echo "Обновить данные:   sudo $DIR/deploy/update.sh   (сам запускается в 04:00 по Ташкенту)"
+echo "Мониторинг:        каждые 5 минут ($DIR/deploy/monitor.sh), лог /var/log/siat-monitor.log"
 echo "Проверка 31 вопроса: cd $DIR && sudo docker compose run --rm bot python eval/run_eval.py --llm"
