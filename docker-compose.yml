@@ -1,0 +1,35 @@
+# SIAT agent on a server: PostgreSQL + Telegram bot. Data updates: deploy/update.sh (cron, nightly).
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: siat
+      POSTGRES_PASSWORD: ${PG_ADMIN_PASSWORD:?set in .env}
+      POSTGRES_DB: siat
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "siat"]
+      interval: 5s
+      retries: 30
+    # no "ports": the database is reachable only inside this compose network
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://siat:${PG_ADMIN_PASSWORD}@db:5432/siat
+      AGENT_DATABASE_URL: postgresql://siat_reader:${PG_READER_PASSWORD}@db:5432/siat
+    volumes:
+      - siatdata:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    logging:
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  pgdata:
+  siatdata:

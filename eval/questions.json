@@ -1,0 +1,339 @@
+[
+ {
+  "q": "2020–2025-yillarda Toshkent viloyatida sanoat mahsulotlari hajmi qanday o‘zgargan?",
+  "indicator": 552,
+  "regions": [
+   "1727"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "2020-2025 yillarda Toshkent viloyatida aholi soni qanday o'zgargan?",
+  "indicator": 246,
+  "regions": [
+   "1727"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "2019-2024 yillarda Samarqand viloyatida tug'ilganlar soni",
+  "indicator": 223,
+  "regions": [
+   "1718"
+  ],
+  "years": [
+   2019,
+   2024
+  ]
+ },
+ {
+  "q": "2020–2025 Toshkent shahrida yalpi hududiy mahsulot",
+  "indicator": 1299,
+  "regions": [
+   "1726"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "Buxoro viloyatida aholi jon boshiga YaHM 2021-2025",
+  "indicator": 660,
+  "regions": [
+   "1706"
+  ],
+  "years": [
+   2021,
+   2025
+  ]
+ },
+ {
+  "q": "Namangan viloyatida asosiy kapitalga investitsiyalar 2020-2025",
+  "indicator": 1326,
+  "regions": [
+   "1714"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "Xorazm viloyatida chakana savdo hajmi 2020-2025 yillarda",
+  "indicator": 2704,
+  "regions": [
+   "1733"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "2023 yilda Toshkent shahrida o'rtacha ish haqi qancha?",
+  "indicator": 500,
+  "regions": [
+   "1726"
+  ],
+  "years": [
+   2023,
+   2023
+  ]
+ },
+ {
+  "q": "Andijonda ishsizlik darajasi 2019-2025",
+  "indicator": 1875,
+  "regions": [
+   "1703"
+  ],
+  "years": [
+   2019,
+   2025
+  ]
+ },
+ {
+  "q": "Navoiy viloyatida eksport hajmi 2020-2025",
+  "indicator": 2360,
+  "regions": [
+   "1712"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "Тошкент вилоятида 2021-2024 йилларда аҳоли жон бошига ЯҲМ",
+  "indicator": 660,
+  "regions": [
+   "1727"
+  ],
+  "years": [
+   2021,
+   2024
+  ]
+ },
+ {
+  "q": "Qoraqalpog'istonda ishsizlik 2020-2025",
+  "indicator": 1875,
+  "regions": [
+   "1735"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "Farg'ona va Andijon viloyatlarida sanoat 2022-2025",
+  "indicator": 552,
+  "regions": [
+   "1703",
+   "1730"
+  ],
+  "years": [
+   2022,
+   2025
+  ]
+ },
+ {
+  "q": "O'zbekistonda eksport hajmi 2020-2025",
+  "indicator": 2360,
+  "regions": [
+   "1700"
+  ],
+  "years": [
+   2020,
+   2025
+  ]
+ },
+ {
+  "q": "Toshkentda ishsizlik 2020-2025",
+  "clarify": true
+ },
+ {
+  "q": "Toshkent viloyatida 2020-2025 yillarda paxta hosildorligi",
+  "clarify": true
+ },
+ {
+  "q": "Samarqand viloyatida kartoshka yetishtirish 2020-2024",
+  "indicator": 323,
+  "regions": [
+   "1718"
+  ],
+  "years": [
+   2020,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Buxoro viloyatida qishloq aholisi soni 2021-2025",
+  "indicator": 247,
+  "regions": [
+   "1706"
+  ],
+  "years": [
+   2021,
+   2025
+  ],
+  "new": true
+ },
+ {
+  "q": "Farg'ona viloyatida tuzilgan nikohlar soni 2019-2024",
+  "indicator": 243,
+  "regions": [
+   "1730"
+  ],
+  "years": [
+   2019,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Andijon viloyatida mehmonxonalar soni 2020-2024",
+  "indicator": 864,
+  "regions": [
+   "1703"
+  ],
+  "years": [
+   2020,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "численность городского населения Наманганская область 2020-2025",
+  "indicator": 248,
+  "regions": [
+   "1714"
+  ],
+  "years": [
+   2020,
+   2025
+  ],
+  "new": true
+ },
+ {
+  "q": "Qashqadaryo viloyatida don yetishtirish 2020-2024",
+  "indicator": 275,
+  "regions": [
+   "1710"
+  ],
+  "years": [
+   2020,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Jizzax viloyatida o'lim koeffitsienti 2019-2024",
+  "indicator": 229,
+  "regions": [
+   "1708"
+  ],
+  "years": [
+   2019,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Sirdaryo viloyatida qattiq qoplamali avtomobil yo'llari uzunligi 2020-2024",
+  "indicator": 670,
+  "regions": [
+   "1724"
+  ],
+  "years": [
+   2020,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Surxondaryo viloyatida ayollar ishsizlik darajasi 2020-2025",
+  "indicator": 2817,
+  "regions": [
+   "1722"
+  ],
+  "years": [
+   2020,
+   2025
+  ],
+  "new": true
+ },
+ {
+  "q": "Toshkent shahrida import hajmi 2020-2025",
+  "indicator": 2361,
+  "regions": [
+   "1726"
+  ],
+  "years": [
+   2020,
+   2025
+  ],
+  "new": true
+ },
+ {
+  "q": "Navoiy viloyatida paxta xom ashyosi yetishtirish 2020-2024",
+  "indicator": 2389,
+  "regions": [
+   "1712"
+  ],
+  "years": [
+   2020,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Samarqand viloyatida maktabgacha ta'lim tashkilotlari soni 2020-2024",
+  "indicator": 1409,
+  "regions": [
+   "1718"
+  ],
+  "years": [
+   2020,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Andijon viloyatida shifokorlar soni 2020-2024",
+  "indicator": 2846,
+  "regions": [
+   "1703"
+  ],
+  "years": [
+   2020,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Самарқанд вилоятида картошка етиштириш 2021-2024",
+  "indicator": 323,
+  "regions": [
+   "1718"
+  ],
+  "years": [
+   2021,
+   2024
+  ],
+  "new": true
+ },
+ {
+  "q": "Xorazm viloyatida go'sht ishlab chiqarish 2020-2024",
+  "clarify": true,
+  "new": true,
+  "note": "go'sht faqat choraklik: yillik bazada yo'q, agent taxmin qilmasligi kerak"
+ }
+]
