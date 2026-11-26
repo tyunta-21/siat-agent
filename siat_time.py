@@ -114,6 +114,8 @@ def period_label(freq: str, year: int, sub: int | None = None, cumulative: bool 
     """'2025' (A, short) / '2025-yil' (A) / '2016/2017 o‘quv yili' / '2025-yil yanvar–sentabr'."""
     if freq == "S":
         return f"{year}/{year + 1}" + ("" if short else " o‘quv yili")
+    if freq == "D":
+        return f"{year} {sub}-davr" if short else f"{year}-yil {sub}-davr"
     if freq in ("Q", "M"):
         return f"{year} {sub_label(freq, sub, cumulative)}" if short else f"{year}-yil {sub_label(freq, sub, cumulative)}"
     return str(year) if short else f"{year}-yil"

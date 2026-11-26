@@ -6,8 +6,8 @@ Output in data/normalized/:
   regions.jsonl       regions and districts (SOATO code + names); only for classifier 1 = Hududlar
   observations.csv    indicator_id, region_code, period, year, quarter, month, value
 
-Period keys in SIAT tables:  "2020" (annual), "2020-Q3" (quarterly), "2020-M09" (monthly),
-"2016/2017" (school year, stored with year = 2016).
+Period keys in SIAT tables:  "2020" (annual), "2020-Q3" or "2020Q9" (quarterly), "2020-M09" (monthly),
+"2016/2017" (school year, stored with year = 2016), "2026-D1" (n-th season of the year, freq D).
 Quarterly and monthly volumes on SIAT are usually year-to-date totals (2025-Q3 = January–September);
 such indicators get cumulative = true, so answers say "yanvar–sentabr", not "III chorak".
 District values (7-digit SOATO codes) come from data/raw/<id>/districts.json, written by
@@ -29,6 +29,8 @@ LANGS = ("uz", "ru", "en", "uzc")
 PERSONAL_KEYS = re.compile(r"phone|email|pochta|fio|fish|fullname|hodim|xodim", re.I)
 PERIOD_RE = re.compile(r"^(\d{4})(?:-(Q[1-4]|M\d{2}))?$")
 SCHOOL_RE = re.compile(r"^(\d{4})\s*/\s*(\d{4})$")
+QEND_RE = re.compile(r"^(\d{4})Q(3|6|9|12)$")      # "2025Q9": quarter named by its last month (= 2025-Q3)
+DAVR_RE = re.compile(r"^(\d{4})-D(\d)$")           # "2026-D1": n-th season (davr) of the year, e.g. silk cocoons
 CUMULATIVE_NOTE = re.compile(r"o.sib\s+boruvchi|нарастающ|ўсиб\s+борувчи|cumulative|year.to.date", re.I)
 # Latin letters that look like Cyrillic ones: SIAT sometimes types "Aндижон" with a Latin A
 _LAT2CYR = str.maketrans("AaBEeKMHOoPpCcTXxy", "АаВЕеКМНОоРрСсТХху")
@@ -48,6 +50,14 @@ def parse_period(key: str) -> dict | None:
     if m and int(m.group(2)) == int(m.group(1)) + 1:
         y = int(m.group(1))
         return {"period": f"{y}/{y + 1}", "freq": "S", "year": y, "quarter": None, "month": None}
+    m = QEND_RE.match(key)
+    if m:
+        y, q = int(m.group(1)), int(m.group(2)) // 3
+        return {"period": f"{y}-Q{q}", "freq": "Q", "year": y, "quarter": q, "month": None}
+    m = DAVR_RE.match(key)
+    if m:  # the season number is kept in the quarter column; freq 'D' tells it apart
+        y, n = int(m.group(1)), int(m.group(2))
+        return {"period": f"{y}-D{n}", "freq": "D", "year": y, "quarter": n, "month": None}
     m = PERIOD_RE.match(key)
     if not m:
         return None
@@ -90,6 +100,17 @@ def table_cells(table: list[dict]):
                     cols.setdefault(p["period"], []).append(v)
     empty = {per for per, vs in cols.items() if len(vs) >= 3 and all(v in (0, 0.0, "0") for v in vs)}
     return [c for c in cells if c[1]["period"] not in empty]
+
+
+_CYR2LAT_LOOK = str.maketrans("АаВЕеКМНОоРрСсТХху", "AaBEeKMHOoPpCcTXxy")
+
+
+def fix_latin(name: str | None) -> str | None:
+    """Replace Cyrillic look-alike letters inside Latin words ("Сhakana" -> "Chakana")."""
+    if not name:
+        return name
+    return re.sub(r"\S+", lambda m: m.group(0).translate(_CYR2LAT_LOOK)
+                  if re.search(r"[a-z]", m.group(0), re.I) else m.group(0), name)
 
 
 def fix_cyrillic(name: str) -> str:
@@ -212,7 +233,7 @@ def main() -> None:
             "source_url": f"https://siat.stat.uz/api/sdmx/{ind_id}/table/",
         }
         for lg in LANGS:
-            ind[f"name_{lg}"] = info.get(f"name_{lg}")
+            ind[f"name_{lg}"] = fix_latin(info.get(f"name_{lg}")) if lg in ("uz", "en") else info.get(f"name_{lg}")
             ind[f"unit_{lg}"] = clean_unit((meta.get("unit") or {}).get(f"value_{lg}"))
             ind[f"methodology_{lg}"] = (meta.get("methodology") or {}).get(f"value_{lg}")
             ind[f"note_{lg}"] = (meta.get("note") or {}).get(f"value_{lg}")

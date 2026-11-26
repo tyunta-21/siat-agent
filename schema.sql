@@ -64,15 +64,15 @@ CREATE TABLE IF NOT EXISTS regions (
 );
 
 CREATE TABLE IF NOT EXISTS periods (
-    period  text PRIMARY KEY,                   -- 2025 | 2025-Q3 | 2025-09 | 2016/2017 (school year)
-    freq    char(1) NOT NULL CHECK (freq IN ('A','Q','M','S')),
+    period  text PRIMARY KEY,                   -- 2025 | 2025-Q3 | 2025-09 | 2016/2017 (school year) | 2026-D1 (season)
+    freq    char(1) NOT NULL CHECK (freq IN ('A','Q','M','S','D')),
     year    smallint NOT NULL,                  -- school year 2016/2017 -> 2016
     quarter smallint,
     month   smallint
 );
--- older databases: allow school years
+-- older databases: allow school years and seasons
 ALTER TABLE periods DROP CONSTRAINT IF EXISTS periods_freq_check;
-ALTER TABLE periods ADD CONSTRAINT periods_freq_check CHECK (freq IN ('A','Q','M','S'));
+ALTER TABLE periods ADD CONSTRAINT periods_freq_check CHECK (freq IN ('A','Q','M','S','D'));
 -- quarterly / monthly series that are year-to-date totals (2025-Q3 = January–September)
 ALTER TABLE indicators ADD COLUMN IF NOT EXISTS cumulative boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS regions_parent_idx ON regions (parent_code);

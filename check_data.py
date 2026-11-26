@@ -84,7 +84,7 @@ def main() -> int:
         res("WARN" if no_annual else "OK", "Davr formati noma’lum",
             f"{len(no_annual)} ta indikatorda davrlarni o‘qib bo‘lmadi: {no_annual[:10]}" if no_annual else "yo‘q")
         cur.execute("SELECT freq, count(DISTINCT indicator_id), count(*) FROM v_obs GROUP BY 1 ORDER BY 1")
-        names = {"A": "yillik", "Q": "choraklik", "M": "oylik", "S": "o‘quv yili"}
+        names = {"A": "yillik", "Q": "choraklik", "M": "oylik", "S": "o‘quv yili", "D": "davr (mavsum)"}
         res("OK", "Davriylik", "; ".join(f"{names.get(f, f)}: {n} ta indikator, {v:,} qiymat"
                                          for f, n, v in cur.fetchall()))
         other = {i: c for i, c in skipped_cols.items() if i not in no_annual}

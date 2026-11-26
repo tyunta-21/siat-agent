@@ -276,7 +276,7 @@ def choose_indicators(question: str, conn) -> tuple[list[int], list[dict]]:
     return chosen, alts
 
 
-FREQ_ORDER = ("A", "S", "Q", "M")
+FREQ_ORDER = ("A", "S", "Q", "M", "D")
 
 
 def resolve_time(conn, inds: list[int], t: TimeAsk, y1: int | None, y2: int | None):
@@ -305,8 +305,8 @@ def resolve_time(conn, inds: list[int], t: TimeAsk, y1: int | None, y2: int | No
         freq = next(f for f in FREQ_ORDER if f in fr)
     kept = [i for i in inds if freq in have.get(i, {})]
     sub = None
-    if freq in ("Q", "M"):
-        if t.every:
+    if freq in ("Q", "M", "D"):
+        if t.every or freq == "D":  # seasons: show every season of the year
             if not y1:  # every quarter / month of the latest year
                 y1 = y2 = fr[freq]
         elif t.month:
@@ -374,7 +374,7 @@ Foydalanuvchi savoliga javob berish uchun PostgreSQL'da BITTA SELECT so‘rovini
 Faqat `v_obs` view'idan foydalan. Ustunlar:
   indicator_id int, dataset_code text, indicator text, unit text,
   region_code text, region text, region_level text ('country' / 'region' / 'district'),
-  freq char ('A' yillik, 'Q' choraklik, 'M' oylik, 'S' o‘quv yili), year int, quarter int, month int,
+  freq char ('A' yillik, 'Q' choraklik, 'M' oylik, 'S' o‘quv yili, 'D' mavsum/davr), year int, quarter int, month int,
   value numeric, period text, cumulative bool, parent_code text
 Qoidalar:
 - Har doim indicator_id, dataset_code, indicator, unit, region_code, region, year, value ustunlarini qaytar
@@ -595,7 +595,7 @@ def run_sql(conn, plan: Plan) -> list[dict]:
 
 
 # ----------------------------------------------------------------------------- answer building
-FREQ_NAME = {"A": "yillik", "Q": "choraklik", "M": "oylik", "S": "o‘quv yili bo‘yicha"}
+FREQ_NAME = {"A": "yillik", "Q": "choraklik", "M": "oylik", "S": "o‘quv yili bo‘yicha", "D": "davrlar bo‘yicha"}
 
 
 def _tkey(r: dict) -> tuple[int, int]:
@@ -623,8 +623,8 @@ def available_text(conn, inds: list[int]) -> str:
             span = f"{y1}–{y2}" if y1 != y2 else f"{y1}"
             if freq == "S":
                 span = f"{y1}/{y1 + 1}–{y2}/{y2 + 1} o‘quv yillari"
-            elif freq in ("Q", "M"):
-                last = {"freq": freq, "year": y2, "quarter": last_sub if freq == "Q" else None,
+            elif freq in ("Q", "M", "D"):
+                last = {"freq": freq, "year": y2, "quarter": last_sub if freq in "QD" else None,
                         "month": last_sub if freq == "M" else None, "cumulative": cum}
                 span += f" ({FREQ_NAME[freq]}, oxirgisi: {_label(last)})"
             else:
@@ -710,7 +710,7 @@ def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
         note = ""
         if freq in ("Q", "M") and allr[0].get("cumulative"):
             note = "\n_Qiymatlar yil boshidan o‘sib boruvchi yakunda (masalan, yanvar–sentabr jami)._"
-        elif freq in ("Q", "M"):
+        elif freq in ("Q", "M", "D"):
             note = f"\n_{FREQ_NAME[freq].capitalize()} ma’lumot._"
         texts.append(f"**{m['name']}** ({unit + ', ' if unit else ''}{period}):\n" + "\n".join("- " + l for l in lines) + note)
 
