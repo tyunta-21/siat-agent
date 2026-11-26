@@ -641,6 +641,7 @@ def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
         m = meta[ind_id]
         unit = m["unit"] or ""
         is_rate = "foiz" in unit.lower() or unit.strip() == "%"
+        u_ = f" ({unit})" if unit else ""  # some SIAT indicators have no unit in their passport
         allr = [r for rs in regions.values() for r in rs]
         keys = sorted({_tkey(r) for r in allr})
         sample = {_tkey(r): r for r in allr}
@@ -664,8 +665,8 @@ def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
                 continue
             last, first = vals[lk], vals[fk]
             if fk == lk:
-                lines.append(f"{region}da {L(lk) if not annual else str(lk[0]) + '-yil'}da: {n(last)} ({unit})."
-                             if annual else f"{region}da {L(lk)}: {n(last)} ({unit}).")
+                lines.append(f"{region}da {lk[0]}-yilda: {n(last)}{u_}." if annual
+                             else f"{region}da {L(lk)}: {n(last)}{u_}.")
                 continue
             verb = "oshgan" if last > first else ("kamaygan" if last < first else "o‘zgarmagan")
             fy, ly = (fk[0], lk[0]) if annual else (L(fk), L(lk))
@@ -677,13 +678,13 @@ def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
             else:
                 pct = (last - first) / first * 100 if first else None
                 pct_s = f", ya’ni {fmt_pct(pct)}" if pct is not None else ""
-                lines.append(f"{region}da {fs} {n(first)} dan {ls} {n(last)} ga {verb}{pct_s} ({unit}).")
+                lines.append(f"{region}da {fs} {n(first)} dan {ls} {n(last)} ga {verb}{pct_s}{u_}.")
         note = ""
         if freq in ("Q", "M") and allr[0].get("cumulative"):
             note = "\n_Qiymatlar yil boshidan o‘sib boruvchi yakunda (masalan, yanvar–sentabr jami)._"
         elif freq in ("Q", "M"):
             note = f"\n_{FREQ_NAME[freq].capitalize()} ma’lumot._"
-        texts.append(f"**{m['name']}** ({unit}, {period}):\n" + "\n".join("- " + l for l in lines) + note)
+        texts.append(f"**{m['name']}** ({unit + ', ' if unit else ''}{period}):\n" + "\n".join("- " + l for l in lines) + note)
 
         reg_names = list(regions.keys())
         head_t = {"A": "Yil", "S": "O‘quv yili"}.get(freq, "Davr")
@@ -695,7 +696,7 @@ def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
                 v = next((r["value"] for r in regions[rn] if _tkey(r) == k), None)
                 cells.append(n(float(v)) if v is not None else "—")
             body.append(f"| {L(k, short=True)} | " + " | ".join(cells) + " |")
-        tables.append(f"{m['name']}, {unit}\n\n" + head + "\n" + "\n".join(body))
+        tables.append(f"{m['name']}{', ' + unit if unit else ''}\n\n" + head + "\n" + "\n".join(body))
         sources.append({"indicator_id": ind_id, "dataset_code": m["code"], "name": m["name"], "unit": unit,
                         "periodicity": m["periodicity"], "siat_updated": str(m["updated"]),
                         "url": f"https://siat.stat.uz/api/sdmx/{ind_id}/table/"})
