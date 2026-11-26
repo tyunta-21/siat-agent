@@ -5,6 +5,7 @@
 # (first time 15-25 min), starts the bot and adds a nightly data update at 04:00 Tashkent time.
 # Safe to run again: keeps .env and the database, rebuilds the bot with the current code.
 set -euo pipefail
+CODE_ONLY=0; [ "${1:-}" = "--code" ] && CODE_ONLY=1   # new code only: no data download
 DIR=/opt/siat_agent
 SRC="$(cd "$(dirname "$0")/.." && pwd)"
 say() { printf "\n\033[1m%s\033[0m\n" "$1"; }
@@ -70,7 +71,9 @@ docker compose build -q bot
 
 say "5/6 Данные SIAT: годовые, квартальные, месячные (первый раз 20-40 минут, дальше только изменения)"
 HAS=$(docker compose exec -T db psql -tA -U siat -d siat -c "SELECT CASE WHEN to_regclass('siat.observations') IS NULL THEN 0 ELSE (SELECT count(*) FROM siat.observations) END" 2>/dev/null || echo 0)
-if [ "${HAS:-0}" -lt 100000 ] && [ -f deploy/siat_dump.sql.gz ] && [ "${HAS:-0}" -eq 0 ]; then
+if [ "$CODE_ONLY" = 1 ] && [ "${HAS:-0}" -gt 0 ]; then
+  echo "Только новый код: данные не перекачиваю (ночное обновление в 04:00 сделает это само)"
+elif [ "${HAS:-0}" -lt 100000 ] && [ -f deploy/siat_dump.sql.gz ] && [ "${HAS:-0}" -eq 0 ]; then
   echo "Загружаю базу из дампа с Mac (deploy/siat_dump.sql.gz)..."
   gunzip -c deploy/siat_dump.sql.gz | docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' db psql -q -v ON_ERROR_STOP=1 -U siat -d siat >/dev/null
 else
@@ -103,10 +106,9 @@ grep -q '^TELEGRAM_ADMIN_CHAT_ID=[0-9]' .env && echo "Тестовое увед�
 # district values: a few hours of slow downloads (SIAT limits request speed), so in the background;
 # the nightly update continues if this run does not finish
 # (a short first run so the first districts, e.g. population, appear within the hour, then a long one)
-nohup setsid bash -c "DISTRICT_MINUTES=20 '$DIR/deploy/update.sh'; DISTRICT_MINUTES=300 '$DIR/deploy/update.sh'" \
+[ "$CODE_ONLY" = 1 ] || nohup setsid bash -c "DISTRICT_MINUTES=20 '$DIR/deploy/update.sh'; DISTRICT_MINUTES=300 '$DIR/deploy/update.sh'" \
   >> /var/log/siat-update.log 2>&1 < /dev/null &
-echo "Районы (туманы и города) загружаются в фоне: первые примерно через час, все за несколько часов."
-echo "Бот работает и в это время."
+[ "$CODE_ONLY" = 1 ] || { echo "Районы (туманы и города) загружаются в фоне: первые примерно через час, все за несколько часов."; echo "Бот работает и в это время."; }
 
 say "Готово!"
 echo "Бот работает на сервере и перезапускается сам (и после перезагрузки сервера)."

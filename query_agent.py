@@ -176,6 +176,13 @@ def find_districts(q: str, conn) -> list[str]:
     return out
 
 
+def explicit_regions(q: str, conn=None) -> bool:
+    """Does the question name a region or district itself (not the default "whole republic")?"""
+    if find_districts(q, conn) or _alias_hits(q, REGION_ALIASES):
+        return True
+    return bool(re.search(r"toshkent|ташкент", q))
+
+
 def find_regions(q: str, conn=None) -> list[str]:
     districts = find_districts(q, conn)
     parents = {c[:4] for c in districts}
@@ -460,7 +467,10 @@ def plan_llm(question: str, conn) -> Plan:
     mode = f"llm:{AI_PROVIDER}:{LLM_MODEL}"
     q = norm(question)
     parsed = find_regions(q, conn)
-    if any(len(c) == 7 for c in parsed):  # districts: the parser's codes are exact
+    named = explicit_regions(q, conn)
+    if named and parsed != ["*"] and set(parsed) != set(regions):
+        # the question names its regions ("O'zbekistonda", "Chilonzor tumanida"): the parser's codes
+        # are exact, the model sometimes widens them to every region
         regions = parsed
     if school_years(q):
         y1, y2 = find_years(q)
@@ -469,7 +479,8 @@ def plan_llm(question: str, conn) -> Plan:
     kept, freq, sub, y1t, y2t = resolve_time(conn, final, t, y1, y2)
     if kept:
         final = kept
-    if set(final) != set(chosen) or freq != "A" or t.any or any(len(c) == 7 for c in regions):
+    if (set(final) != set(chosen) or freq != "A" or t.any or any(len(c) == 7 for c in regions)
+            or (named and parsed != ["*"])):
         # The guard trimmed the model's pick, or the answer needs quarters / months / school years /
         # districts: run the standard query for the chosen indicator(s), regions and years.
         sql, params = template_sql(final, regions or ["1700"], y1t, y2t, freq, sub)
@@ -497,12 +508,19 @@ def check_llm_choice(question: str, conn, chosen: list[int], hits) -> list[int]:
         raise NeedClarification("Savoldagi ko‘rsatkichni aniq topa olmadim. Quyidagilardan birini nazarda "
                                 "tutdingizmi? Nomini savolga qo‘shib qayta yozing:\n" + opts if opts else
                                 "SIAT’ning yillik hududiy ma’lumotlarida bunday ko‘rsatkich topilmadi.")
-    if len(valid) == 1:
-        return valid
     try:
         rule_pick, _ = choose_indicators(question, conn)
     except NeedClarification:
         rule_pick = []
+    if len(valid) == 1:
+        # "o'lim koeffitsienti" -> the model took the urban rate (shahar), the search the total one:
+        # when the search clearly prefers a plain indicator the question fully explains, follow it
+        score = {h.id: h.score for h in hits}
+        r = rule_pick[0] if len(rule_pick) == 1 else None
+        if (r and r != valid[0] and conf.get(r, 0.0) >= MIN_CONFIDENCE
+                and score.get(r, -99) >= score.get(valid[0], -99) + 0.75):
+            return [r]
+        return valid
     both = [i for i in valid if i in rule_pick]
     if both:
         return both
@@ -584,7 +602,7 @@ def available_text(conn, inds: list[int]) -> str:
     out = ""
     with conn.cursor() as cur:
         cur.execute("""SELECT indicator, dataset_code, freq, min(year), max(year), bool_or(cumulative),
-                              max(year * 100 + coalesce(quarter, month, 0)) % 100,
+                              mod(max(year * 100 + coalesce(quarter, month, 0)), 100),
                               string_agg(DISTINCT region, ', ' ORDER BY region)
                                   FILTER (WHERE region_level <> 'district'),
                               count(DISTINCT region_code) FILTER (WHERE region_level = 'district')
