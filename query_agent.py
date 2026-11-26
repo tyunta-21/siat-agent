@@ -380,7 +380,8 @@ Qoidalar:
 - Har doim indicator_id, dataset_code, indicator, unit, region_code, region, year, value ustunlarini qaytar
   (agar agregat kerak bo‘lmasa). ORDER BY indicator_id, region_code, year.
 - Odatda yillik ma'lumotni ol: freq = 'A'. Chorak, oy, "yanvar–sentabr" kabi davrlar va o‘quv yillarini
-  Python o‘zi hal qiladi, sen faqat to‘g‘ri ko‘rsatkich, hudud va yillarni tanla.
+  Python o‘zi hal qiladi, sen faqat to‘g‘ri ko‘rsatkich, hudud va yillarni tanla. Savolda chorak, oy yoki
+  o‘quv yili borligi sababli HECH QACHON clarify qilma: bazada choraklik, oylik va o‘quv yili ma'lumotlari bor.
 - Tuman yoki shahar kodlari (7 xonali) faqat "Savoldagi tumanlar" ro‘yxatida berilgan bo‘lsa ishlatiladi.
 - Toshkent viloyati = '1727', Toshkent shahri = '1726', O‘zbekiston Respublikasi = '1700'.
   Agar savolda faqat "Toshkent" deyilgan bo‘lsa va qaysi biri aniq bo‘lmasa, clarify maydonini to‘ldir.
@@ -456,6 +457,15 @@ def plan_llm(question: str, conn) -> Plan:
         raise ValueError(f"LLM did not return JSON: {content[:200]}")
     d = json.loads(m.group(0))
     if d.get("clarify"):
+        if parse_time(question).any:
+            # the model tends to refuse "yanvar–sentabr" / "o'quv yili" as "only yearly data";
+            # the rule planner knows the quarterly / monthly / school-year series
+            try:
+                plan = plan_rules(question, conn)
+                plan.mode = f"llm:{AI_PROVIDER}:{LLM_MODEL}+rules"
+                return plan
+            except NeedClarification:
+                pass
         raise NeedClarification(d["clarify"])
     chosen = [int(x) for x in d.get("indicator_ids") or [] if str(x).isdigit()]
     regions = [str(x) for x in d.get("region_codes") or []]
