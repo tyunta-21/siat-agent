@@ -68,13 +68,16 @@ say "4/6 PostgreSQL"
 docker compose up -d --wait db
 docker compose build -q bot
 
-say "5/6 Данные SIAT (первый раз 15-25 минут, дальше только изменения)"
+say "5/6 Данные SIAT: годовые, квартальные, месячные (первый раз 20-40 минут, дальше только изменения)"
 HAS=$(docker compose exec -T db psql -tA -U siat -d siat -c "SELECT CASE WHEN to_regclass('siat.observations') IS NULL THEN 0 ELSE (SELECT count(*) FROM siat.observations) END" 2>/dev/null || echo 0)
 if [ "${HAS:-0}" -lt 100000 ] && [ -f deploy/siat_dump.sql.gz ] && [ "${HAS:-0}" -eq 0 ]; then
   echo "Загружаю базу из дампа с Mac (deploy/siat_dump.sql.gz)..."
   gunzip -c deploy/siat_dump.sql.gz | docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' db psql -q -v ON_ERROR_STOP=1 -U siat -d siat >/dev/null
-elif [ "${HAS:-0}" -lt 100000 ]; then
-  docker compose run --rm -T bot ./update_data.sh 2>&1 | grep --line-buffered -E "progress|done:|\| (FAIL|WARN)|FAIL:|ERROR" || true
+else
+  # first install: everything; re-run (upgrade): only new / changed indicators. Districts are
+  # downloaded afterwards in the background (step 6), so this step stays under ~30 minutes.
+  docker compose run --rm -T -e DISTRICT_MINUTES=0 bot ./update_data.sh 2>&1 \
+    | grep --line-buffered -E "progress|done:|normalized:|\| (FAIL|WARN)|FAIL:|ERROR" || true
 fi
 # schema.sql is idempotent: creates the read-only role and its grants (also after a dump restore)
 docker compose exec -T -e PGOPTIONS='-c client_min_messages=warning' db psql -q -U siat -d siat < schema.sql >/dev/null
@@ -97,6 +100,13 @@ sleep 5
 docker compose logs --tail 3 bot
 deploy/notify.sh "Мониторинг включён: сюда придёт сообщение, если бот упадёт или ночное обновление не пройдёт."
 grep -q '^TELEGRAM_ADMIN_CHAT_ID=[0-9]' .env && echo "Тестовое уведомление отправлено тебе в Telegram."
+# district values: a few hours of slow downloads (SIAT limits request speed), so in the background;
+# the nightly update continues if this run does not finish
+# (a short first run so the first districts, e.g. population, appear within the hour, then a long one)
+nohup setsid bash -c "DISTRICT_MINUTES=20 '$DIR/deploy/update.sh'; DISTRICT_MINUTES=300 '$DIR/deploy/update.sh'" \
+  >> /var/log/siat-update.log 2>&1 < /dev/null &
+echo "Районы (туманы и города) загружаются в фоне: первые примерно через час, все за несколько часов."
+echo "Бот работает и в это время."
 
 say "Готово!"
 echo "Бот работает на сервере и перезапускается сам (и после перезагрузки сервера)."
@@ -106,4 +116,5 @@ echo "Лог бота:          cd $DIR && sudo docker compose logs -f bot"
 echo "Вопрос из консоли: cd $DIR && sudo docker compose run --rm bot python query_agent.py \"...\""
 echo "Обновить данные:   sudo $DIR/deploy/update.sh   (сам запускается в 04:00 по Ташкенту)"
 echo "Мониторинг:        каждые 5 минут ($DIR/deploy/monitor.sh), лог /var/log/siat-monitor.log"
-echo "Проверка 31 вопроса: cd $DIR && sudo docker compose run --rm bot python eval/run_eval.py --llm"
+echo "Ход загрузки районов: tail -f /var/log/siat-update.log"
+echo "Проверка вопросов:   cd $DIR && sudo docker compose run --rm bot python eval/run_eval.py --llm"

@@ -6,11 +6,16 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
 STATE=/var/lib/siat-monitor; mkdir -p "$STATE"
+# one update at a time (the nightly cron and a manual / background run must not overlap)
+exec 9>"$STATE/update.lock"
+flock -n 9 || { echo "$(date '+%F %T') another update is running, skip"; exit 0; }
+# minutes for district values per run (the rest continues the next night); 0 = no districts
+DISTRICT_MINUTES=${DISTRICT_MINUTES:-120}
 LOG=$(mktemp)
 fail() { deploy/notify.sh "❌ Ночное обновление данных не прошло ($1). Последние строки:
 $(tail -n 12 "$LOG")"; echo "$(date '+%F %T') update FAILED: $1"; rm -f "$LOG"; exit 1; }
 
-docker compose run --rm -T bot ./update_data.sh >"$LOG" 2>&1 || fail "update_data.sh"
+docker compose run --rm -T -e DISTRICT_MINUTES="$DISTRICT_MINUTES" bot ./update_data.sh >"$LOG" 2>&1 || fail "update_data.sh"
 cat "$LOG"
 docker compose exec -T db psql -q -U siat -d siat -c "ALTER ROLE siat_reader PASSWORD '$PG_READER_PASSWORD'" >/dev/null || fail "database"
 docker compose restart bot >/dev/null || fail "bot restart"   # the bot rebuilds its search index on start

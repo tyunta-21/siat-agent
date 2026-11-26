@@ -27,6 +27,7 @@ import requests
 from siat_common import DATABASE_URL, log
 from siat_dictionary import INDICATOR_SYNONYMS, REGION_ALIASES, norm
 from siat_search import get_index
+from siat_time import TimeAsk, parse_time, period_label, school_years
 
 AGENT_DB_URL = os.environ.get("AGENT_DATABASE_URL", DATABASE_URL)  # ideally the read-only siat_reader role
 # Any OpenAI-compatible chat API. Default: OpenAI (same key as Qonunchi). Alternative: OpenRouter.
@@ -55,6 +56,9 @@ class Plan:
     year_from: int | None = None
     year_to: int | None = None
     alternatives: list[dict] = field(default_factory=list)  # similar indicators to suggest
+    freq: str = "A"                 # A annual, Q quarterly, M monthly, S school year
+    sub: int | None = None          # quarter / month shown for every year (None = all of them)
+    note: str = ""                  # e.g. "only yearly data, the asked part of the year is not published"
 
 
 @dataclass
@@ -124,9 +128,59 @@ def find_indicators(q: str) -> list[int]:
     return chosen
 
 
-def find_regions(q: str) -> list[str]:
+_districts: dict[str, list[dict]] = {}
+
+
+def district_list(conn) -> list[dict]:
+    """Districts and district-level cities in the database (cached per process)."""
+    if conn is None:
+        return []
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM siat.regions WHERE level = 'district'")
+        key = str(cur.fetchone()[0])
+        if key not in _districts:
+            cur.execute("""SELECT d.code, d.name_uz, d.parent_code, p.name_uz, d.aliases
+                           FROM siat.regions d LEFT JOIN siat.regions p ON p.code = d.parent_code
+                           WHERE d.level = 'district' ORDER BY d.code""")
+            _districts.clear()
+            _districts[key] = [dict(code=c, name=n, parent=pc, parent_name=pn, aliases=al or [])
+                               for c, n, pc, pn, al in cur.fetchall()]
+    return _districts[key]
+
+
+def find_districts(q: str, conn) -> list[str]:
+    """District codes named in the question ("Chilonzor tumanida", "Nukus shahrida")."""
+    found: dict[str, tuple[int, str]] = {}  # code -> (alias length, alias)
+    for d in district_list(conn):
+        for a in d["aliases"]:
+            if a.split(" ")[0] in q and re.search(r"(?<![a-zа-я'])" + re.escape(a), q):
+                if len(a) > found.get(d["code"], (0, ""))[0]:
+                    found[d["code"]] = (len(a), a)
+    if not found:
+        return []
+    by_code = {d["code"]: d for d in district_list(conn)}
+    # the same name in two regions ("Yangiobod tumani"): use the region named in the question, or ask
+    out: list[str] = []
+    for alias in dict.fromkeys(a for _, a in found.values()):
+        codes = [c for c, (_, a) in found.items() if a == alias]
+        if len(codes) > 1:
+            named = {code for _, code in _alias_hits(q, REGION_ALIASES)}
+            narrowed = [c for c in codes if by_code[c]["parent"] in named]
+            if len(narrowed) == 1:
+                codes = narrowed
+            else:
+                opts = "; ".join(f"{by_code[c]['name']} ({by_code[c]['parent_name']})" for c in codes)
+                raise NeedClarification(f"Bu nomli tuman/shahar bir nechta: {opts}. Qaysi viloyatdagisi? "
+                                        "Viloyat nomini ham yozing.")
+        out += [c for c in codes if c not in out]
+    return out
+
+
+def find_regions(q: str, conn=None) -> list[str]:
+    districts = find_districts(q, conn)
+    parents = {c[:4] for c in districts}
     codes = []
-    if "toshkent" in q or "ташкент" in q:
+    if ("toshkent" in q or "ташкент" in q) and not any(p in ("1726", "1727") for p in parents):
         city = re.search(r"toshkent (shahr|sh\b)|tashkent city|город ташкент|г\. ?ташкент|ташкент город", q)
         oblast = re.search(r"toshkent vil|tashkent region|ташкентск", q)
         if city:
@@ -140,12 +194,25 @@ def find_regions(q: str) -> list[str]:
                                           if k not in ("1726", "1727")}), reverse=True):
         if code not in codes:
             codes.append(code)
+    # "Samarqand viloyati tumanlari", "по районам": every district of the region(s)
+    if re.search(r"tumanlar|tuman va shaharlar|по районам|районы|районов|районах", q):
+        regs = [c for c in codes if c != "1700"]
+        if not regs:
+            raise NeedClarification("Qaysi viloyat tumanlari kerak? Viloyat nomini yozing "
+                                    "(masalan: Samarqand viloyati tumanlari).")
+        return [d["code"] for d in district_list(conn) if d["parent"] in regs] or regs
+    if districts:
+        # "Samarqand shahri" is a district-level city: the region with the same name is not asked
+        return districts + [c for c in codes if c not in parents and c != "1700"]
     if "barcha viloyat" in q or "viloyatlar kesimida" in q or "hududlar kesimida" in q or "по областям" in q:
         return ["*"]
     return codes or ["1700"]
 
 
 def find_years(q: str) -> tuple[int | None, int | None]:
+    school = school_years(q)
+    if school:  # "2016/2017" is one school year, stored as 2016
+        return min(school), max(school)
     ys = [int(y) for y in re.findall(r"(?<!\d)(19[89]\d|20[0-4]\d)(?!\d)", q)]
     if not ys:
         return None, None
@@ -156,6 +223,20 @@ def _alt(h) -> dict:
     return {"indicator_id": h.id, "dataset_code": h.code, "name": h.name, "unit": h.unit}
 
 
+def prefer_twin(t: TimeAsk, chosen: list[int], hits) -> list[int]:
+    """"yanvar–sentabr sanoat": the synonym points to the yearly series; use its quarterly / monthly
+    twin when the catalog has one that fits the question as well."""
+    if not (t.month or t.freq in ("Q", "M")) or not hits or not chosen:
+        return chosen
+    main = next((h for h in hits if h.id == chosen[0]), None)
+    if main and main.freqs and not set(main.freqs) & {"Q", "M"}:
+        twin = next((h for h in hits if set(h.freqs) & {"Q", "M"} and h.confidence >= max(MIN_CONFIDENCE,
+                     main.confidence) and h.score >= main.score - 2.5), None)
+        if twin:
+            return [twin.id]
+    return chosen
+
+
 def choose_indicators(question: str, conn) -> tuple[list[int], list[dict]]:
     """Synonym dictionary first (tested MVP wording), then the catalog-wide search.
 
@@ -163,8 +244,9 @@ def choose_indicators(question: str, conn) -> tuple[list[int], list[dict]]:
     not total population, although "aholi soni" is a synonym of the latter."""
     q = norm(question)
     syn = find_indicators(q)
-    regions = find_regions(q)
-    hits = get_index(conn).search(question, top=8, regions=regions)
+    regions = find_regions(q, conn)
+    t = parse_time(question)
+    hits = get_index(conn).search(question, top=8, regions=regions, freq=t.freq, sub_year=bool(t.month))
     top = hits[0] if hits else None
     syn_best = max((h.score for h in hits if h.id in syn), default=0.0)
     if top and top.id not in syn and top.confidence >= MIN_CONFIDENCE and (not syn or top.score > syn_best + 1.0):
@@ -178,36 +260,105 @@ def choose_indicators(question: str, conn) -> tuple[list[int], list[dict]]:
         raise NeedClarification("Savoldagi ko‘rsatkichni aniq topa olmadim. Quyidagilardan birini nazarda "
                                 "tutdingizmi? Nomini savolga qo‘shib qayta yozing:\n" + opts)
     else:
-        raise NeedClarification("SIAT’ning yillik hududiy ma’lumotlarida bunday ko‘rsatkich topilmadi. "
+        raise NeedClarification("SIAT’ning hududiy ma’lumotlarida bunday ko‘rsatkich topilmadi. "
                                 "Ko‘rsatkich nomini boshqacha yozib ko‘ring (masalan: aholi soni, ish haqi, "
                                 "sanoat mahsulotlari, eksport).")
+    chosen = prefer_twin(t, chosen, hits)
     best = top.score if top else 0
     alts = [_alt(h) for h in hits if h.id not in chosen and h.score >= 0.6 * best][:3]
     return chosen, alts
 
 
-def template_sql(inds: list[int], regions: list[str], y1: int | None, y2: int | None) -> tuple[str, dict]:
-    sql = ["SELECT indicator_id, dataset_code, indicator, unit, region_code, region, year, value",
-           "FROM v_obs WHERE freq = 'A' AND indicator_id = ANY(%(inds)s)"]
-    params: dict = {"inds": inds}
+FREQ_ORDER = ("A", "S", "Q", "M")
+
+
+def resolve_time(conn, inds: list[int], t: TimeAsk, y1: int | None, y2: int | None):
+    """Which series to show: frequency, part of the year and years.
+
+    Annual data is the default. Quarterly / monthly data is used when the question asks for it
+    ("yanvar–sentabr", "III chorak", "oylar bo‘yicha") or when the indicator has nothing else
+    (meat production is only quarterly). Without a part of the year, the latest published one is
+    shown for every year, so years are compared like with like (January–September with
+    January–September). Returns (indicator ids that have that frequency, freq, sub, y1, y2)."""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT indicator_id, freq, max(year) FROM v_obs WHERE indicator_id = ANY(%s)
+                       GROUP BY 1, 2""", (inds,))
+        have: dict[int, dict[str, int]] = {}
+        for i, f, y in cur.fetchall():
+            have.setdefault(i, {})[f] = y
+    if not have:
+        return inds, "A", None, y1, y2
+    main = next(i for i in inds if i in have)
+    fr = have[main]
+    if t.freq and t.freq in fr:
+        freq = t.freq
+    elif t.month and ("M" in fr or "Q" in fr):
+        freq = "M" if "M" in fr and (t.month % 3 or "Q" not in fr) else "Q"
+    else:
+        freq = next(f for f in FREQ_ORDER if f in fr)
+    kept = [i for i in inds if freq in have.get(i, {})]
+    sub = None
+    if freq in ("Q", "M"):
+        if t.every:
+            if not y1:  # every quarter / month of the latest year
+                y1 = y2 = fr[freq]
+        elif t.month:
+            sub = t.month if freq == "M" else max(1, t.month // 3)
+        else:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT coalesce(quarter, month) FROM v_obs
+                               WHERE indicator_id = %s AND freq = %s AND value IS NOT NULL
+                                 AND (%s::int IS NULL OR year <= %s::int)
+                               ORDER BY year DESC, coalesce(quarter, month) DESC LIMIT 1""",
+                            (main, freq, y2, y2))
+                r = cur.fetchone()
+            sub = r[0] if r else None
+    return kept, freq, sub, y1, y2
+
+
+def time_note(t: TimeAsk, freq: str) -> str:
+    if (t.month or t.freq in ("Q", "M")) and freq in ("A", "S"):
+        asked = ("chorak / oy" if not t.month else
+                 period_label("M", 2000, t.month, True).split(" ", 1)[1])
+        return (f"Bu ko‘rsatkich SIAT’da faqat yillik e’lon qilinadi: so‘ralgan davr ({asked}) bo‘yicha "
+                "ma’lumot yo‘q, shuning uchun yillik qiymatlar ko‘rsatildi.")
+    if t.freq == "S" and freq != "S":
+        return "Bu ko‘rsatkich o‘quv yillari bo‘yicha emas, kalendar yillari bo‘yicha e’lon qilinadi."
+    return ""
+
+
+def template_sql(inds: list[int], regions: list[str], y1: int | None, y2: int | None,
+                 freq: str = "A", sub: int | None = None) -> tuple[str, dict]:
+    sql = ["SELECT indicator_id, dataset_code, indicator, unit, region_code, region, year, value,",
+           "       freq, quarter, month, period, cumulative",
+           "FROM v_obs WHERE freq = %(freq)s AND indicator_id = ANY(%(inds)s)"]
+    params: dict = {"inds": inds, "freq": freq}
     if regions and regions != ["*"]:
         sql.append("AND region_code = ANY(%(regions)s)")
         params["regions"] = regions
+    elif regions == ["*"]:
+        sql.append("AND region_level <> 'district'")
+    if sub:
+        sql.append("AND coalesce(quarter, month) = %(sub)s")
+        params["sub"] = sub
     if y1:
         sql.append("AND year BETWEEN %(y1)s AND %(y2)s")
         params.update(y1=y1, y2=y2 or y1)
-    sql.append("ORDER BY indicator_id, region_code, year")
+    sql.append("ORDER BY indicator_id, region_code, year, quarter, month")
     return "\n".join(sql), params
 
 
 def plan_rules(question: str, conn) -> Plan:
     q = norm(question)
     inds, alts = choose_indicators(question, conn)
-    regions = find_regions(q)
+    regions = find_regions(q, conn)
     y1, y2 = find_years(q)
-    sql, params = template_sql(inds, regions, y1, y2)
+    t = parse_time(question)
+    inds, freq, sub, y1, y2 = resolve_time(conn, inds, t, y1, y2)
+    sql, params = template_sql(inds, regions, y1, y2, freq, sub)
     return Plan(sql=sql, params=params, mode="rules", indicator_ids=inds,
-                region_codes=regions, year_from=y1, year_to=y2, alternatives=alts)
+                region_codes=regions, year_from=y1, year_to=y2, alternatives=alts, freq=freq, sub=sub,
+                note=time_note(t, freq))
 
 
 # ----------------------------------------------------------------------------- LLM planning
@@ -215,12 +366,15 @@ SYSTEM_PROMPT = """Sen O‘zbekiston rasmiy statistikasi (SIAT) bo‘yicha SQL y
 Foydalanuvchi savoliga javob berish uchun PostgreSQL'da BITTA SELECT so‘rovini yoz.
 Faqat `v_obs` view'idan foydalan. Ustunlar:
   indicator_id int, dataset_code text, indicator text, unit text,
-  region_code text, region text, region_level text, freq char ('A' yillik),
-  year int, quarter int, month int, value numeric
+  region_code text, region text, region_level text ('country' / 'region' / 'district'),
+  freq char ('A' yillik, 'Q' choraklik, 'M' oylik, 'S' o‘quv yili), year int, quarter int, month int,
+  value numeric, period text, cumulative bool, parent_code text
 Qoidalar:
 - Har doim indicator_id, dataset_code, indicator, unit, region_code, region, year, value ustunlarini qaytar
   (agar agregat kerak bo‘lmasa). ORDER BY indicator_id, region_code, year.
-- Hozircha faqat yillik ma'lumot bor: freq = 'A'.
+- Odatda yillik ma'lumotni ol: freq = 'A'. Chorak, oy, "yanvar–sentabr" kabi davrlar va o‘quv yillarini
+  Python o‘zi hal qiladi, sen faqat to‘g‘ri ko‘rsatkich, hudud va yillarni tanla.
+- Tuman yoki shahar kodlari (7 xonali) faqat "Savoldagi tumanlar" ro‘yxatida berilgan bo‘lsa ishlatiladi.
 - Toshkent viloyati = '1727', Toshkent shahri = '1726', O‘zbekiston Respublikasi = '1700'.
   Agar savolda faqat "Toshkent" deyilgan bo‘lsa va qaysi biri aniq bo‘lmasa, clarify maydonini to‘ldir.
 - Hudud ko‘rsatilmasa, '1700' (respublika) ni ol.
@@ -243,10 +397,12 @@ Javobni faqat JSON ko‘rinishida ber:
 def catalog_context(conn, question: str) -> tuple[str, list]:
     """Top candidates from the catalog search plus the synonym matches, not all 2 000+ indicators."""
     try:
-        regions = find_regions(norm(question))
+        regions = find_regions(norm(question), conn)
     except NeedClarification:
         regions = None
-    hits = get_index(conn).search(question, top=LLM_CANDIDATES, regions=regions)
+    t = parse_time(question)
+    hits = get_index(conn).search(question, top=LLM_CANDIDATES, regions=regions, freq=t.freq,
+                                  sub_year=bool(t.month))
     n_regions = {h.id: h.regions for h in hits}
     ids = [h.id for h in hits]
     ids += [i for i in find_indicators(norm(question)) if i not in ids]
@@ -254,8 +410,11 @@ def catalog_context(conn, question: str) -> tuple[str, list]:
         cur.execute("""SELECT i.id, i.code, i.name_uz, i.unit_uz, i.synonyms, d.path_uz
                        FROM indicators i LEFT JOIN datasets d ON d.id = i.id WHERE i.id = ANY(%s)""", (ids,))
         info = {r[0]: r for r in cur.fetchall()}
-        cur.execute("SELECT code, name_uz FROM regions ORDER BY code")
+        cur.execute("SELECT code, name_uz FROM regions WHERE level <> 'district' ORDER BY code")
         regs = cur.fetchall()
+        dist = [r for r in (regions or []) if len(r) == 7]
+        cur.execute("SELECT code, name_uz FROM regions WHERE code = ANY(%s) ORDER BY code", (dist,))
+        dist_rows = cur.fetchall()
     lines = ["Nomzod ko‘rsatkichlar (indicator_id | kod | nomi | birlik | bo‘lim | hududlar | sinonimlar):"]
     for i in ids:
         if i in info:
@@ -267,6 +426,9 @@ def catalog_context(conn, question: str) -> tuple[str, list]:
         lines.append("(qidiruv hech narsa topmadi)")
     lines.append("Hududlar (region_code | nomi):")
     lines += [f"{c} | {n}" for c, n in regs]
+    if dist_rows:
+        lines.append("Savoldagi tumanlar / shaharlar (region_code | nomi):")
+        lines += [f"{c} | {n}" for c, n in dist_rows]
     return "\n".join(lines), hits
 
 
@@ -296,11 +458,23 @@ def plan_llm(question: str, conn) -> Plan:
     best = hits[0].score if hits else 0
     alts = [_alt(h) for h in hits if h.id not in final and h.score >= 0.6 * best][:3]
     mode = f"llm:{AI_PROVIDER}:{LLM_MODEL}"
-    if set(final) != set(chosen):
-        # The model's pick was trimmed by the guard: run the standard query for the kept indicator(s).
-        sql, params = template_sql(final, regions or ["1700"], y1, y2)
-        return Plan(sql=sql, params=params, mode=mode + "+guard", indicator_ids=final, region_codes=regions,
-                    year_from=y1, year_to=y2, alternatives=alts)
+    q = norm(question)
+    parsed = find_regions(q, conn)
+    if any(len(c) == 7 for c in parsed):  # districts: the parser's codes are exact
+        regions = parsed
+    if school_years(q):
+        y1, y2 = find_years(q)
+    t = parse_time(question)
+    final = prefer_twin(t, final, hits)
+    kept, freq, sub, y1t, y2t = resolve_time(conn, final, t, y1, y2)
+    if kept:
+        final = kept
+    if set(final) != set(chosen) or freq != "A" or t.any or any(len(c) == 7 for c in regions):
+        # The guard trimmed the model's pick, or the answer needs quarters / months / school years /
+        # districts: run the standard query for the chosen indicator(s), regions and years.
+        sql, params = template_sql(final, regions or ["1700"], y1t, y2t, freq, sub)
+        return Plan(sql=sql, params=params, mode=mode + "+template", indicator_ids=final, region_codes=regions,
+                    year_from=y1t, year_to=y2t, alternatives=alts, freq=freq, sub=sub, note=time_note(t, freq))
     return Plan(sql=d["sql"], mode=mode, indicator_ids=final, region_codes=regions, year_from=y1, year_to=y2,
                 alternatives=alts)
 
@@ -393,19 +567,51 @@ def run_sql(conn, plan: Plan) -> list[dict]:
 
 
 # ----------------------------------------------------------------------------- answer building
+FREQ_NAME = {"A": "yillik", "Q": "choraklik", "M": "oylik", "S": "o‘quv yili bo‘yicha"}
+
+
+def _tkey(r: dict) -> tuple[int, int]:
+    return int(r["year"]), int(r.get("quarter") or r.get("month") or 0)
+
+
+def _label(r: dict, short: bool = False) -> str:
+    return period_label(r.get("freq") or "A", int(r["year"]), r.get("quarter") or r.get("month"),
+                        bool(r.get("cumulative")), short=short)
+
+
+def available_text(conn, inds: list[int]) -> str:
+    """What the database has for these indicators, so the user can re-ask."""
+    out = ""
+    with conn.cursor() as cur:
+        cur.execute("""SELECT indicator, dataset_code, freq, min(year), max(year), bool_or(cumulative),
+                              max(year * 100 + coalesce(quarter, month, 0)) % 100,
+                              string_agg(DISTINCT region, ', ' ORDER BY region)
+                                  FILTER (WHERE region_level <> 'district'),
+                              count(DISTINCT region_code) FILTER (WHERE region_level = 'district')
+                       FROM v_obs WHERE indicator_id = ANY(%s) AND value IS NOT NULL
+                       GROUP BY indicator, dataset_code, freq ORDER BY dataset_code, freq""", (inds,))
+        for name, code, freq, y1, y2, cum, last_sub, regs, n_dist in cur.fetchall():
+            regs = regs if regs and len(regs) < 300 else "barcha hududlar"
+            span = f"{y1}–{y2}" if y1 != y2 else f"{y1}"
+            if freq == "S":
+                span = f"{y1}/{y1 + 1}–{y2}/{y2 + 1} o‘quv yillari"
+            elif freq in ("Q", "M"):
+                last = {"freq": freq, "year": y2, "quarter": last_sub if freq == "Q" else None,
+                        "month": last_sub if freq == "M" else None, "cumulative": cum}
+                span += f" ({FREQ_NAME[freq]}, oxirgisi: {_label(last)})"
+            else:
+                span += "-yillar"
+            dist = f"; {n_dist} ta tuman/shahar" if n_dist else ""
+            out += f"\n\n**{name}** ({code}) bo‘yicha bor ma’lumot: {span}; {regs}{dist}."
+    return out
+
+
 def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
     if not rows:
-        text = ("Bazada bu savol uchun ma’lumot topilmadi (ko‘rsatkich, hudud yoki yillar bo‘yicha). "
+        text = ("Bazada bu savol uchun ma’lumot topilmadi (ko‘rsatkich, hudud yoki davr bo‘yicha). "
                 "Raqamni taxmin qilmayman.")
-        if plan.indicator_ids:  # say what the indicator does have, so the user can re-ask
-            with conn.cursor() as cur:
-                cur.execute("""SELECT indicator, dataset_code, min(year), max(year),
-                                      string_agg(DISTINCT region, ', ' ORDER BY region)
-                               FROM v_obs WHERE indicator_id = ANY(%s) AND freq = 'A'
-                               GROUP BY indicator, dataset_code""", (plan.indicator_ids,))
-                for name, code, y1, y2, regs in cur.fetchall():
-                    regs = regs if len(regs) < 300 else "barcha hududlar"
-                    text += f"\n\n**{name}** ({code}) bo‘yicha bor ma’lumot: {y1}–{y2}-yillar; {regs}."
+        if plan.indicator_ids:
+            text += available_text(conn, plan.indicator_ids)
         return Answer(ok=False, sql=plan.sql, mode=plan.mode, text=text, alternatives=plan.alternatives)
     needed = {"indicator_id", "region", "year", "value"}
     if not needed <= rows[0].keys():
@@ -418,58 +624,77 @@ def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
                       sql=plan.sql, mode=plan.mode)
 
     with conn.cursor() as cur:
-        cur.execute("SELECT id, code, name_uz, unit_uz, periodicity_uz, updated_at FROM siat.indicators "
+        cur.execute("SELECT id, code, name_uz, unit_uz, periodicity_uz, updated_at, cumulative FROM siat.indicators "
                     "WHERE id = ANY(%s)", (sorted({r["indicator_id"] for r in rows}),))
-        meta = {i: dict(code=c, name=n, unit=u, periodicity=p, updated=up) for i, c, n, u, p, up in cur.fetchall()}
+        meta = {i: dict(code=c, name=n, unit=u, periodicity=p, updated=up, cumulative=cu)
+                for i, c, n, u, p, up, cu in cur.fetchall()}
 
     texts, tables, sources = [], [], []
     by_ind: dict[int, dict[str, list[dict]]] = {}
     for r in rows:
+        r.setdefault("freq", "A")
+        if "cumulative" not in r:
+            r["cumulative"] = meta.get(r["indicator_id"], {}).get("cumulative")
         by_ind.setdefault(r["indicator_id"], {}).setdefault(r["region"], []).append(r)
 
     for ind_id, regions in by_ind.items():
         m = meta[ind_id]
         unit = m["unit"] or ""
         is_rate = "foiz" in unit.lower() or unit.strip() == "%"
-        years = sorted({r["year"] for rs in regions.values() for r in rs})
-        y1, y2 = years[0], years[-1]
-        dg = decimals_of(r["value"] for rs in regions.values() for r in rs)
+        allr = [r for rs in regions.values() for r in rs]
+        keys = sorted({_tkey(r) for r in allr})
+        sample = {_tkey(r): r for r in allr}
+        freq = allr[0]["freq"]
+        annual = freq == "A"
+        dg = decimals_of(r["value"] for r in allr)
         n = lambda v: fmt_num(v, dg)  # noqa: E731
-        period = f"{y1}–{y2}" if y1 != y2 else f"{y1}"
+        L = lambda k, short=False: _label(sample[k], short)  # noqa: E731
+        if annual:
+            period = f"{keys[0][0]}–{keys[-1][0]}" if len(keys) > 1 else f"{keys[0][0]}"
+        else:
+            period = L(keys[0]) + (f" — {L(keys[-1])}" if len(keys) > 1 else "")
         lines = []
         for region, rs in regions.items():
-            vals = {r["year"]: float(r["value"]) if r["value"] is not None else None for r in rs}
-            first = next((vals[y] for y in years if vals.get(y) is not None), None)
-            last = next((vals[y] for y in reversed(years) if vals.get(y) is not None), None)
-            fy = next((y for y in years if vals.get(y) is not None), None)
-            ly = next((y for y in reversed(years) if vals.get(y) is not None), None)
-            if first is None or last is None:
+            vals = {_tkey(r): float(r["value"]) if r["value"] is not None else None for r in rs}
+            lk = next((k for k in reversed(keys) if vals.get(k) is not None), None)
+            # compare with the same part of the year (January–September with January–September)
+            fk = next((k for k in keys if vals.get(k) is not None and k[1] == (lk or (0, 0))[1]), None)
+            if lk is None:
                 lines.append(f"{region}: ma’lumot yo‘q.")
                 continue
-            if fy == ly:
-                lines.append(f"{region}da {fy}-yilda: {n(last)} ({unit}).")
+            last, first = vals[lk], vals[fk]
+            if fk == lk:
+                lines.append(f"{region}da {L(lk) if not annual else str(lk[0]) + '-yil'}da: {n(last)} ({unit})."
+                             if annual else f"{region}da {L(lk)}: {n(last)} ({unit}).")
                 continue
             verb = "oshgan" if last > first else ("kamaygan" if last < first else "o‘zgarmagan")
+            fy, ly = (fk[0], lk[0]) if annual else (L(fk), L(lk))
+            fs, ls = (f"{fy}-yildagi", f"{ly}-yilda") if annual else (f"{fy}dagi", f"{ly}da")
             if is_rate:
                 diff = last - first
-                lines.append(f"{region}da {fy}-yildagi {n(first)}% dan {ly}-yilda {n(last)}% ga {verb} "
+                lines.append(f"{region}da {fs} {n(first)}% dan {ls} {n(last)}% ga {verb} "
                              f"({'+' if diff > 0 else ''}{fmt_num(diff, max(dg, 1))} foiz punkt).")
             else:
                 pct = (last - first) / first * 100 if first else None
                 pct_s = f", ya’ni {fmt_pct(pct)}" if pct is not None else ""
-                lines.append(f"{region}da {fy}-yildagi {n(first)} dan {ly}-yilda {n(last)} ga {verb}{pct_s} "
-                             f"({unit}).")
-        texts.append(f"**{m['name']}** ({unit}, {period}):\n" + "\n".join("- " + l for l in lines))
+                lines.append(f"{region}da {fs} {n(first)} dan {ls} {n(last)} ga {verb}{pct_s} ({unit}).")
+        note = ""
+        if freq in ("Q", "M") and allr[0].get("cumulative"):
+            note = "\n_Qiymatlar yil boshidan o‘sib boruvchi yakunda (masalan, yanvar–sentabr jami)._"
+        elif freq in ("Q", "M"):
+            note = f"\n_{FREQ_NAME[freq].capitalize()} ma’lumot._"
+        texts.append(f"**{m['name']}** ({unit}, {period}):\n" + "\n".join("- " + l for l in lines) + note)
 
         reg_names = list(regions.keys())
-        head = "| Yil | " + " | ".join(reg_names) + " |\n|---|" + "---:|" * len(reg_names)
+        head_t = {"A": "Yil", "S": "O‘quv yili"}.get(freq, "Davr")
+        head = f"| {head_t} | " + " | ".join(reg_names) + " |\n|---|" + "---:|" * len(reg_names)
         body = []
-        for y in years:
+        for k in keys:
             cells = []
             for rn in reg_names:
-                v = next((r["value"] for r in regions[rn] if r["year"] == y), None)
+                v = next((r["value"] for r in regions[rn] if _tkey(r) == k), None)
                 cells.append(n(float(v)) if v is not None else "—")
-            body.append(f"| {y} | " + " | ".join(cells) + " |")
+            body.append(f"| {L(k, short=True)} | " + " | ".join(cells) + " |")
         tables.append(f"{m['name']}, {unit}\n\n" + head + "\n" + "\n".join(body))
         sources.append({"indicator_id": ind_id, "dataset_code": m["code"], "name": m["name"], "unit": unit,
                         "periodicity": m["periodicity"], "siat_updated": str(m["updated"]),
@@ -481,6 +706,8 @@ def build_answer(conn, plan: Plan, rows: list[dict]) -> Answer:
     if alts:
         src += "\n\nO‘xshash ko‘rsatkichlar (kerak bo‘lsa, nomini yozib so‘rang): " + "; ".join(
             f"{x['name']} ({x['dataset_code']})" for x in alts) + "."
+    if plan.note:
+        texts.insert(0, "ℹ️ " + plan.note)
     return Answer(ok=True, text="\n\n".join(texts) + "\n\n" + src, table_md="\n\n".join(tables),
                   alternatives=alts, rows=[{k: (float(v) if hasattr(v, "as_tuple") else v) for k, v in r.items()} for r in rows],
                   sql=plan.sql, mode=plan.mode, sources=sources)

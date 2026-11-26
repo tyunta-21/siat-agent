@@ -2,7 +2,8 @@
 
 Checks (FAIL stops a release, WARN is for a human to look at):
   completeness   every downloaded indicator is in the DB; DB values = values in the raw SIAT files
-  regions        only the 15 known regions (republic, Qoraqalpog‘iston, 12 viloyat, Toshkent shahri)
+  regions        only the 15 known regions (republic, Qoraqalpog‘iston, 12 viloyat, Toshkent shahri),
+                 districts have 7-digit codes inside a known region
   Toshkent       1726 (shahar) and 1727 (viloyat) both present and never mixed up in names
   years          annual years between 1990 and next year
   units          every indicator has a unit
@@ -24,7 +25,7 @@ import sys
 import psycopg
 
 from siat_common import DATA_DIR, DATABASE_URL, RAW_DIR, log
-from siat_normalizer import parse_period
+from siat_normalizer import district_cells, parse_period, table_cells
 
 KNOWN_REGIONS = {"1700", "1735", "1703", "1706", "1708", "1710", "1712", "1714", "1718", "1722", "1724",
                  "1727", "1730", "1733", "1726"}
@@ -54,8 +55,9 @@ def main() -> int:
             table = json.loads((d / "table.json").read_text(encoding="utf-8"))
             keys = [k for r in table for c in (r.get("data") or []) for k in c]
             # SIAT sometimes repeats a year ("2010" and "2010\n"): the database keeps one
-            expected[i] = len({(r.get("code"), parse_period(k)["period"]) for r in table
-                               for c in (r.get("data") or []) for k in c if parse_period(k)})
+            cells = {(str(r.get("code")), p["period"]) for r, p, _ in table_cells(table)}
+            cells |= {(code, p["period"]) for code, p, _ in district_cells(d)[1]}
+            expected[i] = len(cells)
             bad = {k.strip() for k in keys if not parse_period(k)}
             if bad:
                 skipped_cols[i] = sorted(bad)
@@ -70,7 +72,7 @@ def main() -> int:
         # completeness
         missing = [i for i in raw if expected[i] and i not in db]
         empty = [i for i, m in raw.items() if not m.get("values")]
-        no_annual = [i for i in raw if raw[i].get("values") and not expected[i]]
+        no_annual = [i for i in raw if raw[i].get("values") and not expected[i]]  # no usable period
         mismatch = [(i, expected[i], db.get(i, (0,))[0]) for i in raw if db.get(i, (0,))[0] != expected[i]]
         res("FAIL" if missing else "OK", "Indikatorlar bazada",
             f"{len(db)} ta indikatorda qiymat bor (yuklangan: {len(raw)}, bazadagi ro‘yxat: {n_ind})"
@@ -79,9 +81,12 @@ def main() -> int:
             f"{len(empty)} ta indikatorda SIAT jadvali bo‘sh" + (f": {empty[:15]}" if empty else ""))
         res("FAIL" if mismatch else "OK", "Qiymatlar soni = SIAT fayllari",
             "hammasi mos" if not mismatch else f"{len(mismatch)} ta mos emas, masalan {mismatch[:5]}")
-        res("WARN" if no_annual else "OK", "Yil formati boshqacha",
-            f"{len(no_annual)} ta indikatorda davr o‘quv yili kabi (2016/2017), hozircha yuklanmaydi: {no_annual[:10]}"
-            if no_annual else "yo‘q")
+        res("WARN" if no_annual else "OK", "Davr formati noma’lum",
+            f"{len(no_annual)} ta indikatorda davrlarni o‘qib bo‘lmadi: {no_annual[:10]}" if no_annual else "yo‘q")
+        cur.execute("SELECT freq, count(DISTINCT indicator_id), count(*) FROM v_obs GROUP BY 1 ORDER BY 1")
+        names = {"A": "yillik", "Q": "choraklik", "M": "oylik", "S": "o‘quv yili"}
+        res("OK", "Davriylik", "; ".join(f"{names.get(f, f)}: {n} ta indikator, {v:,} qiymat"
+                                         for f, n, v in cur.fetchall()))
         other = {i: c for i, c in skipped_cols.items() if i not in no_annual}
         res("OK", "Tashlab ketilgan ustunlar",
             f"{len(other)} ta indikatorda yillik bo‘lmagan ustunlar (Excel qoldig‘i “Unnamed”, “2026 yanvar-iyun”) "
@@ -90,9 +95,13 @@ def main() -> int:
         # regions
         cur.execute("SELECT DISTINCT region_code FROM observations")
         codes = {r[0] for r in cur.fetchall()}
-        extra = sorted(codes - KNOWN_REGIONS)
+        districts = {c for c in codes if len(c) == 7 and c[:4] in KNOWN_REGIONS}
+        extra = sorted(codes - KNOWN_REGIONS - districts)
         res("WARN" if extra else "OK", "Hududlar", f"{len(codes & KNOWN_REGIONS)} ta ma’lum hudud"
             + (f"; noma’lum kodlar: {extra}" if extra else ""))
+        cur.execute("SELECT count(DISTINCT indicator_id) FROM v_obs WHERE region_level = 'district'")
+        res("OK", "Tumanlar va shaharlar", f"{len(districts)} ta tuman/shahar, "
+            f"{cur.fetchone()[0]} ta indikatorda tuman ma’lumoti bor")
         cur.execute("SELECT code, name_uz FROM regions WHERE code IN ('1726','1727') ORDER BY code")
         tosh = dict(cur.fetchall())
         ok = "shahr" in (tosh.get("1726") or "").lower() and "viloyat" in (tosh.get("1727") or "").lower()

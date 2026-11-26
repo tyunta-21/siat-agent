@@ -15,7 +15,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from siat_common import CATALOG_DIR, DATABASE_URL, NORM_DIR, RAW_DIR, ROOT, log, sha256
-from siat_dictionary import INDICATOR_SYNONYMS, REGION_ALIASES
+from siat_dictionary import INDICATOR_SYNONYMS, REGION_ALIASES, district_aliases
 
 LANGS = ("uz", "ru", "en", "uzc")
 
@@ -73,9 +73,10 @@ def load_indicators(cur) -> int:
     rows = jsonl("indicators.jsonl")
     cols = (["id", "code", "parent_id", "classifier_id", "period"]
             + [f"{f}_{lg}" for f in ("name", "unit", "methodology", "note") for lg in LANGS]
-            + ["periodicity_uz", "source_url", "updated_at", "fetched_at"])
+            + ["periodicity_uz", "source_url", "updated_at", "fetched_at", "cumulative"])
     sql = (f"INSERT INTO indicators ({', '.join(cols)}, synonyms) VALUES ({', '.join(['%s'] * (len(cols) + 1))}) "
            "ON CONFLICT (id) DO UPDATE SET " + ", ".join(f"{c}=EXCLUDED.{c}" for c in cols[1:] + ["synonyms"]))
+    rows = [{**r, "cumulative": bool(r.get("cumulative"))} for r in rows]
     cur.executemany(sql, [[r.get(c) for c in cols] + [INDICATOR_SYNONYMS.get(r["id"], [])] for r in rows])
     return len(rows)
 
@@ -83,19 +84,24 @@ def load_indicators(cur) -> int:
 def load_regions(cur) -> int:
     rows = jsonl("regions.jsonl")
     cur.executemany(
-        """INSERT INTO regions (code, siat_id, level, map_code, name_uz, name_ru, name_en, name_uzc, aliases)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """INSERT INTO regions (code, siat_id, level, parent_code, map_code, name_uz, name_ru, name_en, name_uzc,
+                               aliases)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            ON CONFLICT (code) DO UPDATE SET siat_id=EXCLUDED.siat_id, level=EXCLUDED.level,
+               parent_code=EXCLUDED.parent_code,
                map_code=EXCLUDED.map_code, name_uz=EXCLUDED.name_uz, name_ru=EXCLUDED.name_ru,
                name_en=EXCLUDED.name_en, name_uzc=EXCLUDED.name_uzc, aliases=EXCLUDED.aliases""",
-        [(r["code"], r["siat_id"], r["level"], r["map_code"], r["name_uz"], r["name_ru"], r["name_en"],
-          r["name_uzc"], REGION_ALIASES.get(r["code"], [])) for r in rows])
+        [(r["code"], r["siat_id"], r["level"], r.get("parent_code"), r["map_code"], r["name_uz"], r["name_ru"],
+          r["name_en"], r["name_uzc"],
+          REGION_ALIASES.get(r["code"]) or (district_aliases(r) if r["level"] == "district" else []))
+         for r in rows])
     return len(rows)
 
 
-def read_obs() -> list[dict]:
+def read_obs():
+    """Stream observations.csv (over a million rows with districts: not kept in memory)."""
     with (NORM_DIR / "observations.csv").open(encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        yield from csv.DictReader(f)
 
 
 def load_periods(cur) -> int:
@@ -108,17 +114,26 @@ def load_periods(cur) -> int:
 
 
 def load_observations(cur) -> int:
-    obs = read_obs()
+    n = 0
     cur.execute("CREATE TEMP TABLE obs_in (LIKE observations INCLUDING DEFAULTS) ON COMMIT DROP")
     with cur.copy("COPY obs_in (indicator_id, region_code, period, value, value_raw, flag) FROM STDIN") as cp:
-        for o in obs:
+        for o in read_obs():
+            n += 1
             cp.write_row((int(o["indicator_id"]), o["region_code"], o["period"],
                           o["value"] or None, o["value_raw"] or None, o["flag"] or None))
+    cur.execute("ALTER TABLE obs_in ADD PRIMARY KEY (indicator_id, region_code, period)")
     cur.execute("""INSERT INTO observations (indicator_id, region_code, period, value, value_raw, flag)
                    SELECT indicator_id, region_code, period, value, value_raw, flag FROM obs_in
                    ON CONFLICT (indicator_id, region_code, period) DO UPDATE
                    SET value=EXCLUDED.value, value_raw=EXCLUDED.value_raw, flag=EXCLUDED.flag, loaded_at=now()""")
-    return len(obs)
+    # cells SIAT no longer has (or that the normalizer now skips, e.g. all-zero columns) are removed
+    cur.execute("""DELETE FROM observations o
+                   WHERE o.indicator_id IN (SELECT DISTINCT indicator_id FROM obs_in)
+                     AND NOT EXISTS (SELECT 1 FROM obs_in n WHERE n.indicator_id = o.indicator_id
+                                     AND n.region_code = o.region_code AND n.period = o.period)""")
+    if cur.rowcount:
+        log.info("observations: %d old cells removed", cur.rowcount)
+    return n
 
 
 def load_metadata(cur) -> int:

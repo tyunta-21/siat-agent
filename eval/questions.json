@@ -335,5 +335,120 @@
   "clarify": true,
   "new": true,
   "note": "go'sht faqat choraklik: yillik bazada yo'q, agent taxmin qilmasligi kerak"
+ },
+ {
+  "q": "Xorazm viloyatida go'sht yetishtirish",
+  "indicator": 4737,
+  "regions": [
+   "1733"
+  ],
+  "freq": "Q",
+  "v2": true,
+  "note": "go'sht faqat choraklik: oxirgi chorak ko'rsatiladi"
+ },
+ {
+  "q": "мясо в Хорезмской области",
+  "indicator": 4737,
+  "regions": [
+   "1733"
+  ],
+  "freq": "Q",
+  "v2": true
+ },
+ {
+  "q": "2025 yil yanvar-sentabr Samarqand viloyatida sanoat mahsulotlari ishlab chiqarish",
+  "indicator": 556,
+  "regions": [
+   "1718"
+  ],
+  "years": [
+   2025,
+   2025
+  ],
+  "period": [
+   "2025-09"
+  ],
+  "v2": true
+ },
+ {
+  "q": "Samarqand viloyatida 2025 yil III chorakda yalpi hududiy mahsulot",
+  "indicator": 1582,
+  "regions": [
+   "1718"
+  ],
+  "years": [
+   2025,
+   2025
+  ],
+  "period": [
+   "2025-Q3"
+  ],
+  "v2": true
+ },
+ {
+  "q": "Andijon viloyatida inflyatsiya 2025 yil sentabr",
+  "indicator": 4692,
+  "regions": [
+   "1703"
+  ],
+  "years": [
+   2025,
+   2025
+  ],
+  "period": [
+   "2025-09"
+  ],
+  "v2": true
+ },
+ {
+  "q": "Xorazm viloyatida chakana savdo hajmi 2020-2025 yillarda",
+  "indicator": 2704,
+  "regions": [
+   "1733"
+  ],
+  "years": [
+   2020,
+   2025
+  ],
+  "freq": "A",
+  "v2": true,
+  "note": "yillik bor bo'lsa, oylik emas yillik olinadi"
+ },
+ {
+  "q": "Chilonzor tumanida aholi soni 2020-2025",
+  "indicator": 246,
+  "regions": [
+   "1726294"
+  ],
+  "years": [
+   2020,
+   2025
+  ],
+  "v2": true
+ },
+ {
+  "q": "Nukus shahrida doimiy aholi soni 2025",
+  "indicator": 246,
+  "regions": [
+   "1735401"
+  ],
+  "years": [
+   2025,
+   2025
+  ],
+  "v2": true
+ },
+ {
+  "q": "Toshkent shahrida 2020/2021 o'quv yilida nodavlat umumta'lim muassasalari soni",
+  "indicator": 1939,
+  "regions": [
+   "1726"
+  ],
+  "years": [
+   2020,
+   2020
+  ],
+  "freq": "S",
+  "v2": true
  }
 ]

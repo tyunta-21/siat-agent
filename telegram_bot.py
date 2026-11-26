@@ -39,11 +39,15 @@ HELP = (
     "<b>Misollar:</b>\n"
     "• 2020–2025-yillarda Toshkent viloyatida sanoat mahsulotlari hajmi qanday o‘zgargan?\n"
     "• Samarqand va Buxoro viloyatlarida ish haqi 2021-2025\n"
-    "• Andijonda ishsizlik darajasi 2019-2025\n\n"
-    "<b>Ko‘rsatkichlar:</b> SIAT’ning 2 000 dan ortiq yillik hududiy ko‘rsatkichi (aholi, ish haqi, sanoat, "
-    "qishloq xo‘jaligi, savdo, ta’lim, sog‘liqni saqlash va boshqalar). Ko‘rsatkich nomini o‘z so‘zlaringiz bilan "
-    "yozing, bot katalogdan eng yaqinini topadi.\n"
-    "Hududlar: respublika, Qoraqalpog‘iston, 12 viloyat va Toshkent shahri."
+    "• Andijonda ishsizlik darajasi 2019-2025\n"
+    "• 2025-yil yanvar–sentabr Samarqand viloyatida sanoat mahsulotlari\n"
+    "• Xorazm viloyatida go‘sht yetishtirish\n"
+    "• Chilonzor tumanida aholi soni 2020-2025\n\n"
+    "<b>Ko‘rsatkichlar:</b> SIAT’ning 2 700 dan ortiq hududiy ko‘rsatkichi: yillik, choraklik, oylik va o‘quv "
+    "yillari bo‘yicha (aholi, ish haqi, sanoat, qishloq xo‘jaligi, savdo, narxlar, ta’lim va boshqalar). "
+    "Ko‘rsatkich nomini o‘z so‘zlaringiz bilan yozing, bot katalogdan eng yaqinini topadi.\n"
+    "Hududlar: respublika, Qoraqalpog‘iston, 12 viloyat, Toshkent shahri, SIAT e’lon qilgan bo‘lsa — tumanlar "
+    "va shaharlar."
 )
 
 _hits: dict[int, deque] = defaultdict(deque)

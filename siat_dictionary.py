@@ -10,7 +10,7 @@ import re
 INDICATOR_SYNONYMS: dict[int, list[str]] = {
     246:  ["aholi soni", "doimiy aholi", "aholi", "население", "численность населения", "population"],
     223:  ["tug'ilganlar", "tugilganlar", "tug'ilish", "tug'ilganlar soni", "рождаемость", "родившиеся", "births"],
-    1299: ["yalpi hududiy mahsulot", "yahm", "yaim", "yalpi ichki mahsulot", "hududiy mahsulot", "врп", "ввп", "grp", "gdp"],
+    1299: ["yalpi hududiy mahsulot", "yahm", "yaim", "yim", "yalpi ichki mahsulot", "hududiy mahsulot", "врп", "ввп", "grp", "gdp"],
     660:  ["aholi jon boshiga yahm", "jon boshiga yalpi", "jon boshiga yahm", "врп на душу", "per capita gdp", "per capita grp"],
     552:  ["sanoat", "sanoat mahsulotlari", "sanoat ishlab chiqarish", "промышленность", "промышленное производство", "industrial output"],
     1326: ["investitsiya", "investitsiyalar", "asosiy kapitalga investitsiyalar", "инвестиции", "investment"],
@@ -18,6 +18,10 @@ INDICATOR_SYNONYMS: dict[int, list[str]] = {
     500:  ["ish haqi", "oylik ish haqi", "o'rtacha ish haqi", "maosh", "зарплата", "заработная плата", "wage", "salary"],
     1875: ["ishsizlik", "ishsizlik darajasi", "безработица", "unemployment"],
     2360: ["eksport", "eksport hajmi", "экспорт", "export"],
+    # quarterly / monthly only
+    4737: ["go'sht", "мясо", "мяса", "meat"],
+    1582: ["yalpi hududiy mahsulot", "yahm", "yaim", "yim", "yalpi ichki mahsulot", "врп", "ввп", "gdp", "grp"],
+    4692: ["inflyatsiya", "инфляция", "inflation", "narxlar o'sishi"],
 }
 
 REGION_ALIASES: dict[str, list[str]] = {
@@ -55,3 +59,35 @@ def norm(text: str) -> str:
         t = t.translate(_CYR2LAT)
     t = _APOS.sub("'", t)
     return re.sub(r"\s+", " ", t).strip()
+
+
+def district_aliases(r: dict) -> list[str]:
+    """Spellings of a district / district-level city that a question may use.
+
+    Only full forms with "tumani" / "shahri" (or Russian "район" / "город") are used, because many
+    district names are also common words or region names ("Kitob", "Buxoro shahri" vs Buxoro viloyati)."""
+    out: list[str] = []
+    lat = norm(r.get("name_uz") or "")
+    cyr = (r.get("name_uzc") or "").lower().strip()
+    m = re.match(r"(.+?) (tumani|shahri)$", lat)
+    mc = re.match(r"(.+?) (тумани|шаҳри)$", cyr)
+    if m:
+        stem, kind = m.groups()
+        if kind == "tumani":
+            out += [f"{stem} tuman", f"{stem} район"]
+        else:
+            out += [f"{stem} shahr", f"{stem} shahar", f"город {stem}", f"г. {stem}"]
+    elif lat:
+        out.append(lat)
+    if mc:
+        stem, kind = mc.groups()
+        out += [f"{stem} туман", f"{stem} район"] if kind == "тумани" else [f"{stem} шаҳр", f"{stem} шаҳар",
+                                                                             f"город {stem}", f"г. {stem}"]
+    elif cyr:
+        out.append(cyr)
+    seen: list[str] = []
+    for a in out:
+        a = norm(a)
+        if a and a not in seen:
+            seen.append(a)
+    return seen
